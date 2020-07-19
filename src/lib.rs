@@ -1,4 +1,6 @@
+#![allow(unused)]
 /// Cyborg Cats Riding Velociraptor Dragons - ICFP Contest 2020
+
 mod modulate;
 mod parse;
 
