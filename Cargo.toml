@@ -1,8 +1,13 @@
 [package]
-name = "app"
+name = "galaxiator"
 version = "0.1.0"
 authors = []
 edition = "2018"
+
+[workspace]
+members = [
+    "gui",
+]
 
 [[bin]]
 name = "app"

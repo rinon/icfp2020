@@ -10,18 +10,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "bitvec",
- "env_logger",
- "isahc",
- "log",
- "nom",
- "openssl",
-]
-
-[[package]]
 name = "arrayvec"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -221,6 +209,26 @@ dependencies = [
  "memchr",
  "pin-utils",
  "slab",
+]
+
+[[package]]
+name = "galaxiator"
+version = "0.1.0"
+dependencies = [
+ "bitvec",
+ "env_logger",
+ "isahc",
+ "log",
+ "nom",
+ "openssl",
+]
+
+[[package]]
+name = "gui"
+version = "0.1.0"
+dependencies = [
+ "galaxiator",
+ "sdl2",
 ]
 
 [[package]]
@@ -487,6 +495,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdl2"
+version = "0.34.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29fb006600d16da4f1f1e5c7b398f44af2f1b476ff5f2e555651bd78cf4c18d8"
+dependencies = [
+ "bitflags",
+ "lazy_static",
+ "libc",
+ "sdl2-sys",
+]
+
+[[package]]
+name = "sdl2-sys"
+version = "0.34.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ed17d6d46b62b7df12134513bcc4f071268963e8c9bc8bf7ad983fbfb2bc3cc"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "version-compare",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -554,6 +585,12 @@ name = "vcpkg"
 version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6454029bf181f092ad1b853286f23e2c507d8e8194d01d92da4a55c274a5508c"
+
+[[package]]
+name = "version-compare"
+version = "0.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d63556a25bae6ea31b52e640d7c41d1ab27faba4ccb600013837a3d0b3994ca1"
 
 [[package]]
 name = "version_check"
