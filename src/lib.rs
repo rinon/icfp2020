@@ -16,12 +16,17 @@ use std::path::Path;
 use std::rc::Rc;
 use std::str::FromStr;
 
+pub enum State {
+    Initial,
+    Menu,
+}
+
 #[derive(Debug)]
 pub struct Environment {
     symbols: HashMap<u64, Rc<Expr>>,
     galaxy: Rc<Expr>,
     state: Rc<Expr>,
-    loc: (i64, i64),
+    loc: (i32, i32),
 }
 
 impl Default for Environment {
@@ -67,20 +72,65 @@ impl Environment {
 
     pub fn run(&mut self) {
         loop {
-            let (x, y): (Value, Value) = (self.loc.0.into(), self.loc.1.into());
-            let click = cons(x, y);
-            let images = self.interact(click);
+            let images = self.interact(self.loc);
             dbg!(images);
+            // TODO: draw images
             // TODO: get click from user
             break;
         }
     }
 
-    pub fn interact(&mut self, click: Rc<Expr>) -> Rc<Expr> {
+    pub fn set_state(&mut self, state: State) {
+        self.state = match state {
+            State::Initial => Expr::new(Value::Nil),
+            State::Menu => {
+                // parse::parse("ap ap cons 2 ap ap cons ap ap cons 1 ap ap cons -1 nil ap ap cons 0 ap ap cons nil nil")
+                //     .unwrap()
+                parse::parse("ap ap cons 1 ap ap cons ap ap cons 11 nil ap ap cons 0 ap ap cons nil nil")
+                    .unwrap()
+            }
+        };
+    }
+
+    pub fn dump_state(&self) {
+        eprintln!("{:?}", self.state);
+    }
+
+    pub fn increment(&mut self) -> Vec<Vec<(i32, i32)>> {
+        let expr = apply(apply(self.galaxy.clone(), self.state.clone()), cons(Value::Num(0), Value::Num(0))).evaluate(self);
+        let (flag, expr) = expr.cons_value()
+            .expect("Did not find flag");
+        let (newstate, data) = expr.cons_value()
+            .expect("Did not find new state");
+        let value = apply(parse::parse("ap ap b inc ap ap b car ap ap b car cdr").unwrap(), newstate.clone());
+        let value = value.evaluate(self);
+        eprintln!("{:?}", value);
+        // Note: setting this to 3 seems to get me into a new mode
+        self.state = cons(Value::Num(1), cons(cons(value, Value::Nil), cons(Value::Num(0), cons(Value::Nil, Value::Nil))));
+        if flag.num() != 0 {
+            eprintln!("Flag is non-zero!");
+        }
+        multirender(data)
+    }
+
+    pub fn interact(&mut self, (x, y): (i32, i32)) -> Vec<Vec<(i32, i32)>> {
+        let click = cons(Value::Num(x as i64), Value::Num(y as i64));
+        // dbg!(&self.state);
         let expr = apply(apply(self.galaxy.clone(), self.state.clone()), click).evaluate(self);
-        dbg!(expr);
-        // TODO: send interaction to proxy
-        Expr::new(Value::Nil)
+        let (flag, expr) = expr.cons_value()
+            .expect("Did not find flag");
+        let (newstate, data) = expr.cons_value()
+            .expect("Did not find new state");
+        self.state = newstate;
+        let pixels = if flag.num() == 0 {
+            data
+        } else {
+            let data = modulate::modulate(&*data)
+                .expect("Couldn't modulate message");
+            // TODO: send interaction to proxy
+            unimplemented!("Send to proxy");
+        };
+        multirender(pixels)
     }
 
     pub fn evaluate(&self, expr: Rc<Expr>) -> Rc<Expr> {
@@ -105,7 +155,7 @@ impl Environment {
                 Car => apply(x.clone(), T),
                 Cdr => apply(x.clone(), F),
                 Mod => {
-                    let modulated = modulate::modulate(&*x.evaluate(self), self)
+                    let modulated = modulate::modulate(&*x.evaluate(self))
                         .unwrap_or_else(|e| panic!("Couldn't modulate expression: {:?} ({:?})", x, e));
                     Linear(modulated).into()
                 }
@@ -118,7 +168,6 @@ impl Environment {
                         expr
                     }
                 }
-                Send => unimplemented!(),
                 Neg => Num(-x.evaluate(self).num()).into(),
                 Pwr2 => {
                     let x = x.evaluate(self).num();
@@ -302,7 +351,6 @@ pub enum Value {
     Lt,
     Mod,
     Dem,
-    Send,
     Neg,
     S,
     C,
@@ -316,11 +364,9 @@ pub enum Value {
     Cdr,
     Nil,
     IsNil,
-    Draw,
-    Checkerboard,
-    MultipleDraw,
-    If0,
-    Interact,
+    // Draw,
+    // If0,
+    // Interact,
 }
 
 impl FromStr for Value {
@@ -338,7 +384,6 @@ impl FromStr for Value {
             "lt" => Value::Lt,
             "mod" => Value::Mod,
             "dem" => Value::Dem,
-            "send" => Value::Send,
             "neg" => Value::Neg,
             "s" => Value::S,
             "c" => Value::C,
@@ -353,18 +398,32 @@ impl FromStr for Value {
             "cdr" => Value::Cdr,
             "nil" => Value::Nil,
             "isnil" => Value::IsNil,
-            "draw" => Value::Draw,
-            "checkerboard" => Value::Checkerboard,
-            "multipledraw" => Value::MultipleDraw,
-            "if0" => Value::If0,
-            "interact" => Value::Interact,
             _ => return Err("Could not match value string"),
         };
         Ok(value)
     }
 }
 
-impl Expr {}
+
+fn multirender(expr: Rc<Expr>) -> Vec<Vec<(i32, i32)>> {
+    let mut images = vec![];
+    let (mut expr, _) = expr.cons_value().unwrap();
+    while let Some((image, xs)) = expr.cons_value() {
+        images.push(render(image));
+        expr = xs;
+    }
+    images
+}
+
+fn render(mut expr: Rc<Expr>) -> Vec<(i32, i32)> {
+    let mut image = vec![];
+    while let Some((pixel, xs)) = expr.cons_value() {
+        expr = xs;
+        let (x, y) = pixel.cons_value().unwrap();
+        image.push((x.num() as i32, y.num() as i32));
+    }
+    image
+}
 
 #[cfg(test)]
 fn eval_tests(cases: &[&str]) {
@@ -547,4 +606,17 @@ fn read_galaxy() {
     assert_eq!(env.symbols.len(), 392);
 
     env.run();
+}
+
+#[test]
+fn scratch() {
+    dbg!(parse::parse("( ap ap vec 1 1 , ap ap vec 3 1 , ap ap vec 4 4 )"));
+
+    let _ = env_logger::builder().is_test(true).try_init();
+    let mut env = Environment::from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/galaxy.txt"))
+        .expect("Could not open galaxy.txt");
+    env.increment();
+    dbg!(&env.state);
+    env.increment();
+    dbg!(&env.state);
 }

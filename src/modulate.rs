@@ -16,11 +16,11 @@ use std::rc::Rc;
 
 use super::{Environment, Expr, Value, cons};
 
-pub fn modulate(input: &Expr, env: &Environment) -> Result<Vec<u8>, String> {
-    modulate_element(input, env).map(BitVec::into_vec)
+pub fn modulate(input: &Expr) -> Result<Vec<u8>, String> {
+    modulate_element(input).map(BitVec::into_vec)
 }
 
-fn modulate_element(input: &Expr, env: &Environment) -> Result<BitVec<Msb0, u8>, String> {
+fn modulate_element(input: &Expr) -> Result<BitVec<Msb0, u8>, String> {
     match input.value() {
         Value::Num(num) => {
             let mut vec = if num < 0 {
@@ -46,8 +46,8 @@ fn modulate_element(input: &Expr, env: &Environment) -> Result<BitVec<Msb0, u8>,
     match input.cons_value() {
         Some((x, xs)) => {
             let mut vec = bitvec![Msb0, u8; 1, 1];
-            vec.append(&mut modulate_element(&*x, env)?);
-            vec.append(&mut modulate_element(&*xs, env)?);
+            vec.append(&mut modulate_element(&*x)?);
+            vec.append(&mut modulate_element(&*xs)?);
             Ok(vec)
         }
         None => Err(format!("Cannot modulate value {:?}", input)),
