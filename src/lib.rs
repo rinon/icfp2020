@@ -2,6 +2,7 @@
 mod modulate;
 mod parse;
 
+use log::warn;
 use nom::error::VerboseError;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -73,8 +74,8 @@ impl Environment {
         }
     }
 
-    pub fn interact(&mut self, _click: Rc<Expr>) -> Rc<Expr> {
-        let expr = apply(self.galaxy.clone(), self.state.clone()).evaluate(self);
+    pub fn interact(&mut self, click: Rc<Expr>) -> Rc<Expr> {
+        let expr = apply(apply(self.galaxy.clone(), self.state.clone()), click).evaluate(self);
         dbg!(expr);
         // TODO: send interaction to proxy
         Expr::new(Value::Nil)
@@ -87,7 +88,7 @@ impl Environment {
             return evaluated.clone();
         }
 
-        dbg!(&expr);
+        // dbg!(&expr);
 
         match &expr.kind {
             Symbol(sym) => {
@@ -131,10 +132,14 @@ impl Environment {
                     F => x.clone(),
                     Add => Value::from(x.evaluate(self).num() + y.evaluate(self).num()).into(),
                     Mul => Value::from(x.evaluate(self).num() * y.evaluate(self).num()).into(),
-                    Div => Value::from(x.evaluate(self).num() / y.evaluate(self).num()).into(),
-                    Lt => Value::from(x.evaluate(self).num() < y.evaluate(self).num()).into(),
+                    Div => Value::from(y.evaluate(self).num() / x.evaluate(self).num()).into(),
+                    Lt => Value::from(y.evaluate(self).num() < x.evaluate(self).num()).into(),
                     Eq => Value::from(x.evaluate(self).num() == y.evaluate(self).num()).into(),
-                    Cons => apply(apply(Cons, y.evaluate(self)), x.evaluate(self)),
+                    Cons => {
+                        let res = apply(apply(Cons, y.evaluate(self)), x.evaluate(self));
+                        *res.evaluated.borrow_mut() = Some(res.clone());
+                        res
+                    }
                     Ap(fun3, z) => match fun3.evaluate(self).kind {
                         S => apply(apply(z.clone(), x.clone()), apply(y.clone(), x.clone())),
                         C => apply(apply(z.clone(), x.clone()), y.clone()),
@@ -144,7 +149,10 @@ impl Environment {
                     },
                     _ => expr,
                 },
-                _ => expr,
+                _ => {
+                    // warn!("Could not evaluate function: {:?} {:?}", fun, x);
+                    expr
+                }
             },
             _ => expr,
         }
@@ -226,7 +234,7 @@ impl Expr {
 
     fn value(&self) -> Value {
         if let Some(evaluated) = &*self.evaluated.borrow() {
-            evaluated.value()
+            evaluated.kind.clone()
         } else {
             self.kind.clone()
         }
@@ -358,10 +366,10 @@ impl Expr {}
 
 #[cfg(test)]
 fn eval_tests(cases: &[&str]) {
+    let _ = env_logger::builder().is_test(true).try_init();
     let env = Environment::default();
     for case in cases.into_iter() {
         let parsed = parse::parse_line(case).unwrap();
-        dbg!(&parsed);
         assert_eq!(parsed.0.evaluate(&env), parsed.1.evaluate(&env));
     }
 }
@@ -531,6 +539,7 @@ fn msg_35() {
 
 #[test]
 fn read_galaxy() {
+    let _ = env_logger::builder().is_test(true).try_init();
     let mut env = Environment::from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/galaxy.txt"))
         .expect("Could not open galaxy.txt");
     assert_eq!(env.symbols.len(), 392);
