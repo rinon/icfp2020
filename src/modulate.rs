@@ -14,16 +14,15 @@ use nom::IResult;
 
 use std::rc::Rc;
 
-use super::{Expr, Value};
+use super::{Environment, Expr, Value};
 
-pub fn modulate(input: &Expr) -> Result<Vec<u8>, String> {
-    modulate_element(input).map(BitVec::into_vec)
+pub fn modulate(input: &Expr, env: &Environment) -> Result<Vec<u8>, String> {
+    modulate_element(input, env).map(BitVec::into_vec)
 }
 
-fn modulate_element(input: &Expr) -> Result<BitVec<Msb0, u8>, String> {
+fn modulate_element(input: &Expr, env: &Environment) -> Result<BitVec<Msb0, u8>, String> {
     match input.value() {
         Some(Value::Num(num)) => {
-            eprintln!("Num: {}", num);
             let mut vec = if num < 0 {
                 bitvec![Msb0, u8; 1,0]
             } else {
@@ -44,13 +43,11 @@ fn modulate_element(input: &Expr) -> Result<BitVec<Msb0, u8>, String> {
         _ => {}
     }
 
-    match input.cons() {
+    match input.eval_cons(env) {
         Some((x, xs)) => {
-            eprintln!("Modulating a cons: {:?}", input);
             let mut vec = bitvec![Msb0, u8; 1, 1];
-            vec.append(&mut modulate_element(&*x)?);
-            vec.append(&mut modulate_element(&*xs)?);
-            dbg!(&vec);
+            vec.append(&mut modulate_element(&*x, env)?);
+            vec.append(&mut modulate_element(&*xs, env)?);
             Ok(vec)
         }
         None => Err(format!("Cannot modulate value {:?}", input)),
@@ -91,7 +88,6 @@ fn value(input: (&[u8], usize)) -> IResult<(&[u8], usize), Rc<Expr>> {
 
     let value = words.iter().fold(0, |acc, item| (acc << 4) | item);
 
-    dbg!(&s, value);
     match s {
         Sign::Positive => Ok((input, Expr::new(value.into()))),
         Sign::Negative => Ok((input, Expr::new((-value).into()))),
@@ -107,7 +103,6 @@ enum Sign {
 }
 
 fn sign(input: (&[u8], usize)) -> IResult<(&[u8], usize), Sign> {
-    dbg!(input);
     alt((
         map(tag(0b00, 2usize), |_| Sign::Nil),
         map(tag(0b01, 2usize), |_| Sign::Positive),

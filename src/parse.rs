@@ -3,7 +3,7 @@ use nom::character::complete::{char, alphanumeric1, digit1, space0, space1, one_
 use nom::combinator::{map, map_res, all_consuming, recognize, opt};
 use nom::error::{VerboseError};
 use nom::sequence::{pair, terminated, preceded, separated_pair, delimited};
-use nom::multi::{many0, separated_list};
+use nom::multi::{many0, separated_list, many_till};
 use nom::{branch::alt, IResult};
 
 use std::num::ParseIntError;
@@ -11,22 +11,58 @@ use std::rc::Rc;
 
 use super::{Expr, Value};
 
-pub fn parse(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
+pub fn parse_lines<'a, I>(input: I) -> Result<Vec<Rc<Expr>>, nom::Err<VerboseError<&'a str>>>
+where I: IntoIterator<Item = &'a str>
+{
+    input.into_iter().map(|line| {
+        parse(line)
+    }).collect()
+}
+
+pub fn parse(input: &str) -> Result<Rc<Expr>, nom::Err<VerboseError<&str>>> {
     all_consuming(alt((
         eq,
         element,
     )))(input)
+        .map(|(_, expr)| expr)
 }
 
 pub fn element(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
     alt((
+        cons,
+        ap,
+        symbol,
         keyword,
         number,
         variable,
-        ap,
         list,
         linear,
     ))(input)
+}
+
+fn cons(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
+    map(
+        many_till(
+            preceded(
+                terminated(tag("ap ap cons"), space1),
+                element,
+            ),
+            terminated(tag("nil"), space0),
+        ),
+        |(items, _nil)| {
+            Expr::new_list(items)
+        }
+    )(input)
+}
+
+fn symbol(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
+    map_res(
+        terminated(preceded(char(':'), digit1), space0),
+        |num: &str| -> Result<Rc<Expr>, ParseIntError> {
+            Ok(Expr::new(Value::Symbol(num.parse()?)))
+        },
+    )(input)
+
 }
 
 fn keyword(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
