@@ -10,6 +10,8 @@ path = "app/main.rs"
 
 [dependencies]
 bitvec = "0.17"
+env_logger = "0.7"
 isahc = "0.6"
 openssl = { version = "0.10", features = ["vendored"] }
+log = "0.4"
 nom = "5.1"
