@@ -9,21 +9,16 @@ use nom::{branch::alt, IResult};
 use std::num::ParseIntError;
 use std::rc::Rc;
 
-use super::{Expr, Value};
+use super::{Expr, Value, apply};
 
-pub fn parse_lines<'a, I>(input: I) -> Result<Vec<Rc<Expr>>, nom::Err<VerboseError<&'a str>>>
-where I: IntoIterator<Item = &'a str>
-{
-    input.into_iter().map(|line| {
-        parse(line)
-    }).collect()
+pub fn parse_line(input: &str) -> Result<(Rc<Expr>, Rc<Expr>), nom::Err<VerboseError<&str>>> {
+    all_consuming(
+        separated_pair(element, terminated(tag("="), space1), element),
+    )(input).map(|(_, expr)| expr)
 }
 
 pub fn parse(input: &str) -> Result<Rc<Expr>, nom::Err<VerboseError<&str>>> {
-    all_consuming(alt((
-        eq,
-        element,
-    )))(input)
+    all_consuming(element)(input)
         .map(|(_, expr)| expr)
 }
 
@@ -84,23 +79,23 @@ fn ap(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
     preceded(
         terminated(tag("ap"), space1),
         map(pair(element, element), |(arg1, arg2)| {
-            Expr::new_apply(arg1, arg2,)
+            apply(arg1, arg2)
         }),
     )(input)
 }
 
-fn eq(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
-    map(
-        separated_pair(element, terminated(tag("="), space1), element),
-        |(arg1, arg2)| {
-            Expr::new_fn(&[
-                Expr::new(Value::Eq),
-                arg1,
-                arg2,
-            ])
-        },
-    )(input)
-}
+// fn eq(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
+//     map(
+//         separated_pair(element, terminated(tag("="), space1), element),
+//         |(arg1, arg2)| {
+//             Expr::new_fn(&[
+//                 Expr::new(Value::Eq),
+//                 arg1,
+//                 arg2,
+//             ])
+//         },
+//     )(input)
+// }
 
 fn variable(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
     map_res(

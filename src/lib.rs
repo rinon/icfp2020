@@ -1,17 +1,17 @@
 /// Cyborg Cats Riding Velociraptor Dragons - ICFP Contest 2020
-
 mod modulate;
 mod parse;
 
+use nom::error::VerboseError;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::str::FromStr;
 use std::rc::Rc;
-use std::collections::HashMap;
+use std::str::FromStr;
 
 #[derive(Debug)]
 pub struct Environment {
@@ -34,22 +34,29 @@ impl Default for Environment {
 
 impl Environment {
     pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let exprs = parse::parse_lines(fs::read_to_string(path.as_ref())?.lines())
-            .unwrap_or_else(|e| panic!("Could not parse input file: {}\n{}", path.as_ref().display(), e));
+        let exprs = fs::read_to_string(path.as_ref())?
+            .lines()
+            .into_iter()
+            .map(parse::parse_line)
+            .collect::<Result<Vec<_>, nom::Err<VerboseError<&str>>>>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Could not parse input file: {}\n{}",
+                    path.as_ref().display(),
+                    e
+                )
+            });
         eprintln!("Finished parsing");
         let mut env = Environment::default();
-        for expr in exprs.into_iter() {
-            if let Some(Value::Eq) = expr.oper() {
-                let args = expr.args();
-                match args[0].value() {
-                    Some(Value::Symbol(sym)) => {
-                        env.symbols.insert(sym, args[1].clone());
-                    }
-                    Some(Value::Galaxy) => {
-                        env.galaxy = args[1].clone();
-                    }
-                    _ => {}
+        for (lhs, rhs) in exprs.into_iter() {
+            match lhs.kind {
+                Value::Symbol(sym) => {
+                    env.symbols.insert(sym, rhs);
                 }
+                Value::Galaxy => {
+                    env.galaxy = rhs;
+                }
+                _ => panic!("Unexpected lhs in file: {:?}", lhs),
             }
         }
         Ok(env)
@@ -58,7 +65,7 @@ impl Environment {
     pub fn run(&mut self) {
         loop {
             let (x, y): (Value, Value) = (self.loc.0.into(), self.loc.1.into());
-            let click = Expr::cons(x.into(), y.into());
+            let click = cons(x, y);
             let images = self.interact(click);
             dbg!(images);
             // TODO: get click from user
@@ -67,320 +74,173 @@ impl Environment {
     }
 
     pub fn interact(&mut self, _click: Rc<Expr>) -> Rc<Expr> {
-        let expr = Expr::new_apply(self.galaxy.clone(), self.state.clone());
-        expr.evaluate(self);
+        let expr = apply(self.galaxy.clone(), self.state.clone()).evaluate(self);
         dbg!(expr);
         // TODO: send interaction to proxy
         Expr::new(Value::Nil)
     }
 
-    pub fn evaluate(&self, args: &Vec<Rc<Expr>>) -> Option<ExprKind> {
-        let op = args[0].value()?;
-        //dbg!(&op, &args[1..]);
-        match op {
-            Value::Symbol(sym) => {
+    pub fn evaluate(&self, expr: Rc<Expr>) -> Rc<Expr> {
+        use Value::*;
+
+        if let Some(evaluated) = &*expr.evaluated.borrow() {
+            return evaluated.clone();
+        }
+
+        dbg!(&expr);
+
+        match &expr.kind {
+            Symbol(sym) => {
                 let function = self.symbols.get(&sym).expect("Missing function symbol");
-                Some(function.0.borrow().clone())
+                function.clone()
             }
-            op if args.len() == 1 => {
-                Some(ExprKind::Evaluated(op))
-            }
-            Value::Variable(..) => None,
-            Value::Eq => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                let arg1 = args.get(2)?;
-                arg1.evaluate(self);
-                Some(ExprKind::Evaluated((arg0 == arg1).into()))
-            }
-            Value::Inc => Some(ExprKind::Evaluated((args.get(1)?.value()?.num() + 1).into())),
-            Value::Dec => Some(ExprKind::Evaluated((args.get(1)?.value()?.num() - 1).into())),
-            Value::Add => Some(ExprKind::Evaluated((args.get(1)?.value()?.num() + args.get(2)?.value()?.num()).into())),
-            Value::Mul => Some(ExprKind::Evaluated((args.get(1)?.value()?.num() * args.get(2)?.value()?.num()).into())),
-            Value::Div => Some(ExprKind::Evaluated((args.get(1)?.value()?.num() / args.get(2)?.value()?.num()).into())),
-            Value::Lt => Some(ExprKind::Evaluated((args.get(1)?.value()?.num() < args.get(2)?.value()?.num()).into())),
-            Value::Mod => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                let modulated = modulate::modulate(&*arg0, self);
-                Some(ExprKind::Evaluated(Value::Linear(modulated.ok()?)))
-            }
-            Value::Dem => {
-                if let Value::Linear(modulated) = args.get(1)?.value()? {
-                    let expr = modulate::demodulate(&modulated)
-                        .expect("Could not demodulate")
-                        .1;
-                    let kind = Some(expr.0.borrow().clone());
-                    kind
-                } else {
-                    None
+            Ap(fun, x) => match &fun.evaluate(self).kind {
+                Inc => Value::from(x.evaluate(self).num() + 1).into(),
+                Dec => Value::from(x.evaluate(self).num() - 1).into(),
+                Nil => Expr::new(T),
+                IsNil => apply(x.clone(), apply(T, apply(T, F))),
+                Car => apply(x.clone(), T),
+                Cdr => apply(x.clone(), F),
+                Mod => {
+                    let modulated = modulate::modulate(&*x.evaluate(self), self)
+                        .unwrap_or_else(|e| panic!("Couldn't modulate expression: {:?} ({:?})", x, e));
+                    Linear(modulated).into()
                 }
-            }
-            Value::Send => unimplemented!(),
-            Value::Neg => Some(ExprKind::Evaluated((-args.get(1)?.value()?.num()).into())),
-            Value::Ap(fun, arg) => {
-                let fun = fun.evaluate(self);
-                let arg1 = args.get(2)?;
-                arg1.evaluate(self);
-                Some(arg0.apply(arg1))
-            }
-            Value::S => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                let arg1 = args.get(2)?;
-                arg1.evaluate(self);
-                let arg2 = args.get(3)?;
-                arg2.evaluate(self);
-                Some(ExprKind::Unevaluated {
-                    args: vec![
-                        Expr::new(Value::Ap),
-                        Expr::new_apply(arg0.clone(), arg2.clone()),
-                        Expr::new_apply(arg1.clone(), arg2.clone()),
-                    ]
-                })
-            }
-            Value::C => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                let arg1 = args.get(2)?;
-                arg1.evaluate(self);
-                let arg2 = args.get(3)?;
-                arg2.evaluate(self);
-                Some(ExprKind::Unevaluated {
-                    args: vec![
-                        Expr::new(Value::Ap),
-                        Expr::new_apply(arg0.clone(), arg2.clone()),
-                        arg1.clone(),
-                    ]
-                })
-            }
-            Value::B => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                let arg1 = args.get(2)?;
-                arg1.evaluate(self);
-                let arg2 = args.get(3)?;
-                arg2.evaluate(self);
-                Some(ExprKind::Unevaluated {
-                    args: vec![
-                        Expr::new(Value::Ap),
-                        arg0.clone(),
-                        Expr::new_apply(arg1.clone(), arg2.clone()),
-                    ]
-                })
-            }
-            Value::T => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                args.get(2)?;
-                Some(arg0.0.borrow().clone())
-            }
-            Value::F => {
-                args.get(1)?;
-                let arg1 = args.get(2)?;
-                arg1.evaluate(self);
-                Some(arg1.0.borrow().clone())
-            }
-            Value::Pwr2 => {
-                let arg0 = args.get(1)?.value()?.num();
-                if arg0 == -1 {
-                    Some(ExprKind::Evaluated(0.into()))
-                } else {
-                    Some(ExprKind::Evaluated(2i64.pow(arg0.try_into().unwrap()).into()))
+                Dem => {
+                    if let Linear(modulated) = x.evaluate(self).value() {
+                        modulate::demodulate(&modulated)
+                            .expect("Could not demodulate")
+                            .1
+                    } else {
+                        expr
+                    }
                 }
-            }
-            Value::I => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                Some(arg0.0.borrow().clone())
-            }
-            Value::Cons => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                let arg1 = args.get(2)?;
-                arg1.evaluate(self);
-                let arg2 = args.get(3)?;
-                arg2.evaluate(self);
-                Some(ExprKind::Unevaluated {
-                    args: vec![
-                        Expr::new(Value::Ap),
-                        Expr::new_apply(arg2.clone(), arg0.clone()),
-                        arg1.clone(),
-                    ]
-                })
-            }
-            Value::Car => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                Some(ExprKind::Unevaluated {
-                    args: vec![
-                        Expr::new(Value::Ap),
-                        arg0.clone(),
-                        Expr::new(Value::T),
-                    ]
-                })
-            }
-            Value::Cdr => {
-                let arg0 = args.get(1)?;
-                arg0.evaluate(self);
-                Some(ExprKind::Unevaluated {
-                    args: vec![
-                        Expr::new(Value::Ap),
-                        arg0.clone(),
-                        Expr::new(Value::F),
-                    ]
-                })
-            }
-            Value::Nil => {
-                args.get(1)?;
-                Some(ExprKind::Evaluated(Value::T))
-            }
-            Value::IsNil => {
-                let arg0 = args.get(1)?;
-                Some(ExprKind::Evaluated((arg0.oper()? == Value::Nil).into()))
-            }
-            _ => unimplemented!("Op {:?} is not yet implemented", op),
+                Send => unimplemented!(),
+                Neg => Num(-x.evaluate(self).num()).into(),
+                Pwr2 => {
+                    let x = x.evaluate(self).num();
+                    if x == -1 {
+                        Num(0).into()
+                    } else {
+                        Num(2i64.pow(x.try_into().unwrap())).into()
+                    }
+                }
+                I => x.evaluate(self),
+                Ap(fun2, y) => match &fun2.evaluate(self).kind {
+                    T => y.clone(),
+                    F => x.clone(),
+                    Add => Value::from(x.evaluate(self).num() + y.evaluate(self).num()).into(),
+                    Mul => Value::from(x.evaluate(self).num() * y.evaluate(self).num()).into(),
+                    Div => Value::from(x.evaluate(self).num() / y.evaluate(self).num()).into(),
+                    Lt => Value::from(x.evaluate(self).num() < y.evaluate(self).num()).into(),
+                    Eq => Value::from(x.evaluate(self).num() == y.evaluate(self).num()).into(),
+                    Cons => apply(apply(Cons, y.evaluate(self)), x.evaluate(self)),
+                    Ap(fun3, z) => match fun3.evaluate(self).kind {
+                        S => apply(apply(z.clone(), x.clone()), apply(y.clone(), x.clone())),
+                        C => apply(apply(z.clone(), x.clone()), y.clone()),
+                        B => apply(z.clone(), apply(y.clone(), x.clone())),
+                        Cons => apply(apply(x.clone(), z.clone()), y.clone()),
+                        _ => expr,
+                    },
+                    _ => expr,
+                },
+                _ => expr,
+            },
+            _ => expr,
         }
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
 pub struct Expr {
     kind: Value,
-    evaluated: RefCell<Option<Value>>,
+    evaluated: RefCell<Option<Rc<Expr>>>,
 }
 
-// impl fmt::Debug for Expr {
-//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-//         match &*self.0.borrow() {
-//             ExprKind::Evaluated(val) => write!(f, "{:?}", val),
-//             ExprKind::Unevaluated{args} => {
-//                 f.debug_list().entries(args.iter()).finish()
-//             }
-//         }
-//     }
-// }
+impl fmt::Debug for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.value(), f)
+    }
+}
 
-// #[derive(Clone, Debug, Eq, PartialEq)]
-// pub enum ExprKind {
-//     Evaluated(Value),
-//     Unevaluated {
-//         args: Vec<Rc<Expr>>,
-//     }
-// }
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.value() == other.value()
+    }
+}
+
+impl Eq for Expr {}
+
+fn apply<A, B>(fun: A, arg: B) -> Rc<Expr>
+where
+    A: Into<Rc<Expr>>,
+    B: Into<Rc<Expr>>,
+{
+    Expr::new(Value::Ap(fun.into(), arg.into()))
+}
+
+fn cons<A, B>(head: A, tail: B) -> Rc<Expr>
+where
+    A: Into<Rc<Expr>>,
+    B: Into<Rc<Expr>>,
+{
+    apply(apply(Value::Cons, head), tail)
+}
 
 impl Expr {
     pub fn new(value: Value) -> Rc<Self> {
-        Rc::new(Expr(RefCell::new(ExprKind::Evaluated(value))))
-    }
-
-    pub fn new_fn(args: &[Rc<Expr>]) -> Rc<Self> {
-        Rc::new(Expr(RefCell::new(ExprKind::Unevaluated {
-            args: args.to_vec(),
-        })))
-    }
-
-    pub fn new_apply(arg0: Rc<Expr>, arg1: Rc<Expr>) -> Rc<Expr> {
-        Self::new_fn(&[
-            Self::new(Value::Ap),
-            arg0,
-            arg1,
-        ])
+        Rc::new(Expr {
+            kind: value,
+            evaluated: RefCell::new(None),
+        })
     }
 
     pub fn new_list(list: Vec<Rc<Expr>>) -> Rc<Expr> {
         list.into_iter().rfold(Expr::new(Value::Nil), |list, item| {
-            Expr::new_apply(
-                Expr::new_apply(
-                    Expr::new(Value::Cons),
-                    item,
-                ),
-                list,
-            )
+            apply(apply(Expr::new(Value::Cons), item), list)
         })
     }
 
-    pub fn cons(arg0: Rc<Expr>, arg1: Rc<Expr>) -> Rc<Expr> {
-        Self::new_fn(&[
-            Self::new(Value::Cons),
-            arg0,
-            arg1,
-        ])
+    pub fn evaluate(self: &Rc<Expr>, env: &Environment) -> Rc<Expr> {
+        if let Some(val) = &*self.evaluated.borrow() {
+            return val.clone();
+        }
+        let mut expr = self.clone();
+        loop {
+            let res = env.evaluate(expr.clone());
+            if expr == res {
+                if *self != res {
+                    *self.evaluated.borrow_mut() = Some(res.clone());
+                }
+                return res;
+            }
+            expr = res;
+        }
     }
 
-    pub fn evaluate(&self, env: &Environment) -> Option<Value> {
-        match &*self.0.borrow() {
-            ExprKind::Evaluated(Value::Symbol(s)) => {
-                ExprKind::Unevaluated {
-                    args: vec![Expr::new(Value::Symbol(*s))],
-                }
-            }
-            ExprKind::Evaluated(val) => return Some(val.clone()),
-            ExprKind::Unevaluated { args } => {
-                if let Some(res) = env.evaluate(&args) {
-                    res
-                } else {
-                    return None;
-                }
-            }
-        };
-        *self.0.borrow_mut() = replacement;
-        self.evaluate(env)
+    fn num(&self) -> i64 {
+        match self.kind {
+            Value::Num(val) => val,
+            _ => panic!("Could not interpret expr {:?} as a number", self),
+        }
     }
 
-    fn apply(&self, arg: &Rc<Expr>) -> ExprKind {
-        {
-            let inner = self.0.borrow();
-            match &*inner {
-                ExprKind::Evaluated(val) => {
-                    ExprKind::Unevaluated {
-                        args: vec![Self::new(val.clone()), arg.clone()],
-                    }
-                }
-                ExprKind::Unevaluated { args } => {
-                    let mut args = args.clone();
-                    args.push(arg.clone());
-                    ExprKind::Unevaluated {
-                        args,
-                    }
+    fn value(&self) -> Value {
+        if let Some(evaluated) = &*self.evaluated.borrow() {
+            evaluated.value()
+        } else {
+            self.kind.clone()
+        }
+    }
+
+    pub fn cons_value(&self) -> Option<(Rc<Expr>, Rc<Expr>)> {
+        if let Value::Ap(head, xs) = self.value() {
+            if let Value::Ap(cons, x) = head.value() {
+                if let Value::Cons = cons.value() {
+                    return Some((x, xs));
                 }
             }
         }
-    }
-
-    fn value(&self) -> Option<Value> {
-        match &*self.0.borrow() {
-            ExprKind::Evaluated(val) => Some(val.clone()),
-            ExprKind::Unevaluated{..} => None,
-        }
-    }
-
-    fn oper(&self) -> Option<Value> {
-        match &*self.0.borrow() {
-            ExprKind::Evaluated(val) => Some(val.clone()),
-            ExprKind::Unevaluated{args} => args[0].value(),
-        }
-    }
-
-    fn args(&self) -> Vec<Rc<Expr>> {
-        match &*self.0.borrow() {
-            ExprKind::Evaluated(_) => vec![],
-            ExprKind::Unevaluated{args} => args[1..].to_vec(),
-        }
-    }
-
-    pub fn eval_cons(&self, env: &Environment) -> Option<(Rc<Expr>, Rc<Expr>)> {
-        self.evaluate(env);
-        match &*self.0.borrow() {
-            ExprKind::Evaluated(..) => None,
-            ExprKind::Unevaluated{args} => {
-                if args.get(0)?.value()? == Value::Cons {
-                    Some((args.get(1)?.clone(), args.get(2)?.clone()))
-                } else {
-                    None
-                }
-            }
-        }
+        None
     }
 }
 
@@ -494,19 +354,15 @@ impl FromStr for Value {
     }
 }
 
-impl Value {
-    fn num(self) -> i64 {
-        match self {
-            Value::Num(val) => val,
-            _ => panic!("Could not interpret value {:?} as a number", self),
-        }
-    }
-}
+impl Expr {}
 
 #[cfg(test)]
 fn eval_tests(cases: &[&str]) {
-    for case in cases {
-        assert_eq!(parse::parse(case).unwrap().evaluate(&Environment::default()), Some(Value::T));
+    let env = Environment::default();
+    for case in cases.into_iter() {
+        let parsed = parse::parse_line(case).unwrap();
+        dbg!(&parsed);
+        assert_eq!(parsed.0.evaluate(&env), parsed.1.evaluate(&env));
     }
 }
 
@@ -610,9 +466,7 @@ fn msg_24() {
 
 #[test]
 fn msg_25() {
-    eval_tests(&[
-        "ap ap ap cons x0 x1 x2   =   ap ap x2 x0 x1"
-    ])
+    eval_tests(&["ap ap ap cons x0 x1 x2   =   ap ap x2 x0 x1"])
 }
 
 #[test]
@@ -633,17 +487,12 @@ fn msg_27() {
 
 #[test]
 fn msg_28() {
-    eval_tests(&[
-        "ap nil x0   =   t"
-    ])
+    eval_tests(&["ap nil x0   =   t"])
 }
 
 #[test]
 fn msg_29() {
-    eval_tests(&[
-        "ap isnil nil   =   t",
-        "ap isnil ap ap cons x0 x1   =   f",
-    ])
+    eval_tests(&["ap isnil nil   =   t", "ap isnil ap ap cons x0 x1   =   f"])
 }
 
 #[test]

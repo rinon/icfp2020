@@ -14,7 +14,7 @@ use nom::IResult;
 
 use std::rc::Rc;
 
-use super::{Environment, Expr, Value};
+use super::{Environment, Expr, Value, cons};
 
 pub fn modulate(input: &Expr, env: &Environment) -> Result<Vec<u8>, String> {
     modulate_element(input, env).map(BitVec::into_vec)
@@ -22,7 +22,7 @@ pub fn modulate(input: &Expr, env: &Environment) -> Result<Vec<u8>, String> {
 
 fn modulate_element(input: &Expr, env: &Environment) -> Result<BitVec<Msb0, u8>, String> {
     match input.value() {
-        Some(Value::Num(num)) => {
+        Value::Num(num) => {
             let mut vec = if num < 0 {
                 bitvec![Msb0, u8; 1,0]
             } else {
@@ -39,11 +39,11 @@ fn modulate_element(input: &Expr, env: &Environment) -> Result<BitVec<Msb0, u8>,
             vec.extend_from_slice(&num.bits::<Msb0>()[64 - len * 4..64]);
             return Ok(vec);
         }
-        Some(Value::Nil) => return Ok(bitvec![Msb0, u8; 0, 0]),
+        Value::Nil => return Ok(bitvec![Msb0, u8; 0, 0]),
         _ => {}
     }
 
-    match input.eval_cons(env) {
+    match input.cons_value() {
         Some((x, xs)) => {
             let mut vec = bitvec![Msb0, u8; 1, 1];
             vec.append(&mut modulate_element(&*x, env)?);
@@ -64,11 +64,7 @@ fn element(input: (&[u8], usize)) -> IResult<(&[u8], usize), Rc<Expr>> {
         preceded(
             tag(0b11, 2usize),
             map(pair(element, element), |(v1, v2)| {
-                Expr::new_fn(&[
-                    Expr::new(Value::Cons),
-                    v1,
-                    v2,
-                ])
+                cons(v1, v2)
             }),
         ),
         value,
