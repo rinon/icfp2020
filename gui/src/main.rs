@@ -1,3 +1,4 @@
+use clap::{App, Arg};
 use image::{GrayImage, ImageFormat, Luma};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -19,13 +20,24 @@ const BACKGROUND_COLOR: Color = Color::RGBA(32, 32, 32, 255);
 
 pub fn main() -> Result<(), String> {
     env_logger::init();
+
+    let args = App::new("Galaxiator GUI")
+        .author("Stephen Crane")
+        .arg(Arg::with_name("tutorial").takes_value(true))
+        .get_matches();
+
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
 
-    let mut galaxy = Environment::from_galaxy()
-        .expect("Could not open galaxy.txt");
+    let mut galaxy = Environment::from_galaxy().expect("Could not open galaxy.txt");
     let mut images = galaxy.click((0, 0));
-    eprintln!("{:?}", images);
+    if let Some(tutorial) = args.value_of("tutorial") {
+        images = galaxy.start_tutorial(
+            tutorial
+                .parse()
+                .expect("Expected an integer tutorial number"),
+        );
+    }
 
     let window = video_subsystem
         .window(
@@ -150,7 +162,12 @@ pub fn main() -> Result<(), String> {
     Ok(())
 }
 
-fn handle_input(galaxy: &mut Environment, images: &mut Vec<Vec<(i32, i32)>>, keys: &HashSet<Keycode>, new_keys: HashSet<Keycode>) {
+fn handle_input(
+    galaxy: &mut Environment,
+    images: &mut Vec<Vec<(i32, i32)>>,
+    keys: &HashSet<Keycode>,
+    new_keys: HashSet<Keycode>,
+) {
     if new_keys.is_empty() {
         return;
     }

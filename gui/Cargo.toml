@@ -9,3 +9,4 @@ galaxiator = { version = "0.1", path = "../" }
 sdl2 = "0.34"
 env_logger = "0.7"
 image = "0.23"
+clap = "2.33"
