@@ -4,66 +4,64 @@ use bitvec::bitvec;
 use bitvec::order::Msb0;
 use bitvec::slice::AsBits;
 use bitvec::vec::BitVec;
-use nom::bits::bits;
-use nom::bits::streaming::{tag, take};
+use nom::bytes::complete::{take, tag};
+use nom::character::complete::char;
 use nom::branch::alt;
 use nom::combinator::map;
 use nom::multi::{count, many0_count};
-use nom::sequence::{pair, preceded};
-use nom::IResult;
+use nom::sequence::{pair, preceded, terminated};
+use nom::{error::VerboseError, IResult};
 
 use std::rc::Rc;
 
 use super::{Environment, Expr, Value, cons};
 
-pub fn modulate(input: &Expr) -> Result<Vec<u8>, String> {
-    modulate_element(input).map(BitVec::into_vec)
+
+pub fn modulate(input: &Expr) -> Result<String, String> {
+    modulate_element(input)
 }
 
-fn modulate_element(input: &Expr) -> Result<BitVec<Msb0, u8>, String> {
+fn modulate_element(input: &Expr) -> Result<String, String> {
     match input.value() {
-        Value::Num(num) => {
-            let mut vec = if num < 0 {
-                bitvec![Msb0, u8; 1,0]
-            } else {
-                bitvec![Msb0, u8; 0,1]
-            };
-            let num = num.wrapping_abs() as u64;
-            let len: usize = if num == 0 {
-                0
-            } else {
-                ((64 - num.leading_zeros() + 3) / 4) as usize
-            };
-            vec.extend_from_slice(&bitvec![1; len]);
-            vec.push(false);
-            vec.extend_from_slice(&num.bits::<Msb0>()[64 - len * 4..64]);
-            return Ok(vec);
+        Value::Num(num) => modulate_num(num),
+        Value::T | Value::Nil => Ok("00".to_string()),
+        _ => match input.cons_value() {
+            Some((x, xs)) => {
+                let mut s = "11".to_string();
+                s += &modulate_element(&*x)?;
+                s += &modulate_element(&*xs)?;
+                Ok(s)
+            }
+            None => Err(format!("Cannot modulate value {:?}", input)),
         }
-        Value::Nil => return Ok(bitvec![Msb0, u8; 0, 0]),
-        _ => {}
-    }
-
-    match input.cons_value() {
-        Some((x, xs)) => {
-            let mut vec = bitvec![Msb0, u8; 1, 1];
-            vec.append(&mut modulate_element(&*x)?);
-            vec.append(&mut modulate_element(&*xs)?);
-            Ok(vec)
-        }
-        None => Err(format!("Cannot modulate value {:?}", input)),
     }
 }
 
-
-pub fn demodulate(input: &[u8]) -> IResult<&[u8], Rc<Expr>> {
-    bits(element)(input)
+fn modulate_num(num: i64) -> Result<String, String> {
+    let mut s = if num < 0 {
+        "10".to_string()
+    } else {
+        "01".to_string()
+    };
+    let num = num.wrapping_abs() as u64;
+    let len: usize = if num == 0 {
+        0
+    } else {
+        ((64 - num.leading_zeros() + 3) / 4) as usize
+    };
+    s.extend(vec!['1'; len]);
+    s.push('0');
+    if len > 0 {
+        s += &format!("{:0width$b}", num, width=len*4);
+    }
+    Ok(s)
 }
 
-fn element(input: (&[u8], usize)) -> IResult<(&[u8], usize), Rc<Expr>> {
+pub fn demodulate(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
     alt((
         preceded(
-            tag(0b11, 2usize),
-            map(pair(element, element), |(v1, v2)| {
+            tag("11"),
+            map(pair(demodulate, demodulate), |(v1, v2)| {
                 cons(v1, v2)
             }),
         ),
@@ -71,18 +69,22 @@ fn element(input: (&[u8], usize)) -> IResult<(&[u8], usize), Rc<Expr>> {
     ))(input)
 }
 
-fn value(input: (&[u8], usize)) -> IResult<(&[u8], usize), Rc<Expr>> {
+fn value(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
     let (input, s) = sign(input)?;
     if let Sign::Nil = s {
         return Ok((input, Expr::new(Value::Nil)));
     }
 
-    let (input, len) = many0_count(tag(1, 1usize))(input)?;
-    let (input, _) = tag(0, 1usize)(input)?;
+    let (input, len) = terminated(many0_count(char('1')), char('0'))(input)?;
 
-    let (input, words) = count(take(4usize), len)(input)?;
+    let (input, value) = take(4*len)(input)?;
 
-    let value = words.iter().fold(0, |acc, item| (acc << 4) | item);
+    let value = if len == 0 {
+        0i64
+    } else {
+        i64::from_str_radix(value, 2)
+            .expect("Could not parse integer")
+    };
 
     match s {
         Sign::Positive => Ok((input, Expr::new(value.into()))),
@@ -98,11 +100,11 @@ enum Sign {
     Negative,
 }
 
-fn sign(input: (&[u8], usize)) -> IResult<(&[u8], usize), Sign> {
+fn sign(input: &str) -> IResult<&str, Sign, VerboseError<&str>> {
     alt((
-        map(tag(0b00, 2usize), |_| Sign::Nil),
-        map(tag(0b01, 2usize), |_| Sign::Positive),
-        map(tag(0b10, 2usize), |_| Sign::Negative),
+        map(tag("00"), |_| Sign::Nil),
+        map(tag("01"), |_| Sign::Positive),
+        map(tag("10"), |_| Sign::Negative),
     ))(input)
 }
 

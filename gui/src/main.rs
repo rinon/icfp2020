@@ -1,3 +1,4 @@
+use image::{GrayImage, ImageFormat, Luma};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -5,20 +6,25 @@ use sdl2::pixels::Color;
 use sdl2::{rect::Point, render::BlendMode};
 
 use std::collections::HashSet;
+use std::process::Command;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 
 use galaxiator::{Environment, State};
 
-const DIMENSIONS: (i32, i32) = (1600, 1200);
-const SCALE: i32 = 4;
+const DIMENSIONS: (i32, i32) = (3440, 1440);
+static SCALE: AtomicI32 = AtomicI32::new(4);
+
+const BACKGROUND_COLOR: Color = Color::RGBA(32, 32, 32, 255);
 
 pub fn main() -> Result<(), String> {
+    env_logger::init();
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
 
-    let mut galaxy = Environment::from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/../galaxy.txt"))
+    let mut galaxy = Environment::from_galaxy()
         .expect("Could not open galaxy.txt");
-    let mut images = galaxy.interact((0, 0));
+    let mut images = galaxy.click((0, 0));
     eprintln!("{:?}", images);
 
     let window = video_subsystem
@@ -34,8 +40,11 @@ pub fn main() -> Result<(), String> {
 
     let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
 
-    canvas.set_scale(SCALE as f32, SCALE as f32)?;
-    canvas.set_draw_color(Color::RGB(32, 32, 32));
+    canvas.set_scale(
+        SCALE.load(Ordering::Relaxed) as f32,
+        SCALE.load(Ordering::Relaxed) as f32,
+    )?;
+    canvas.set_draw_color(BACKGROUND_COLOR);
     canvas.set_blend_mode(BlendMode::Blend);
     canvas.clear();
     canvas.present();
@@ -64,31 +73,23 @@ pub fn main() -> Result<(), String> {
         }
 
         // Create a set of pressed Keys.
-        let keys = events
+        let keys: HashSet<Keycode> = events
             .keyboard_state()
             .pressed_scancodes()
             .filter_map(Keycode::from_scancode)
             .collect();
 
+        // Holding spacebar just clicks at (0,0)
+        if keys.contains(&Keycode::Space) {
+            images = galaxy.click((0, 0));
+        }
+
         // Get the difference between the new and old sets.
         let new_keys = &keys - &prev_keys;
-        prev_keys = keys;
 
-        if !new_keys.is_empty() {
-            if new_keys.contains(&Keycode::Space) {
-                galaxy.dump_state();
-            }
-            if new_keys.contains(&Keycode::Num0) {
-                galaxy.set_state(State::Initial);
-                images = galaxy.interact((0, 0));
-                continue;
-            }
-            if new_keys.contains(&Keycode::Num1) {
-                galaxy.set_state(State::Menu);
-                images = galaxy.interact((0, 0));
-                continue;
-            }
-        }
+        handle_input(&mut galaxy, &mut images, &keys, new_keys);
+
+        prev_keys = keys;
 
         // get a mouse state
         let state = events.mouse_state();
@@ -99,20 +100,40 @@ pub fn main() -> Result<(), String> {
         // Get the difference between the new and old sets.
         let new_buttons = &buttons - &prev_buttons;
 
+        // if new_buttons.contains(&MouseButton::Right) {
+        //     let (x, y) = (state.x(), state.y());
+        //     let raw_pixels = canvas.read_pixels(Rect::from_center((x,y), 8, 8), PixelFormatEnum::RGBA32)
+        //         .expect("Couldn't read from canvas");
+        //     let mut pixels = vec![];
+        //     let mut i = 0;
+        //     for _x in 0..8 {
+        //         pixels.push(vec![false; 8]);
+        //     }
+        //     for y in 0..8 {
+        //         for x in 0..8 {
+        //             let is_color = raw_pixels[i] != BACKGROUND_COLOR.r ||
+        //                 raw_pixels[i+1] != BACKGROUND_COLOR.g ||
+        //                 raw_pixels[i+2] != BACKGROUND_COLOR.b;
+        //             pixels[x][y] = is_color;
+        //             i += 4;
+        //         }
+        //     }
+        //     dbg!(pixels);
+        // }
+
         if new_buttons.contains(&MouseButton::Left) {
             let (x, y) = rev_translate((state.x(), state.y()));
-            images = galaxy.interact((x, y));
-            // } else {
-            //     count += 1;
-            //     if count == 30 {
-            //         count = 0;
-            //         images = galaxy.increment();
-            //     }
+            images = galaxy.click((x, y));
         }
 
         prev_buttons = buttons;
 
-        canvas.set_draw_color(Color::RGB(32, 32, 32));
+        canvas.set_scale(
+            SCALE.load(Ordering::Relaxed) as f32,
+            SCALE.load(Ordering::Relaxed) as f32,
+        )?;
+
+        canvas.set_draw_color(BACKGROUND_COLOR);
         canvas.clear();
         for (image, color) in images.iter().zip(colors.iter()) {
             canvas.set_draw_color(*color);
@@ -129,13 +150,114 @@ pub fn main() -> Result<(), String> {
     Ok(())
 }
 
+fn handle_input(galaxy: &mut Environment, images: &mut Vec<Vec<(i32, i32)>>, keys: &HashSet<Keycode>, new_keys: HashSet<Keycode>) {
+    if new_keys.is_empty() {
+        return;
+    }
+    if new_keys.contains(&Keycode::S) {
+        save_images(images);
+    }
+    if new_keys.contains(&Keycode::D) {
+        galaxy.toggle_debug();
+    }
+    if new_keys.contains(&Keycode::Return) {
+        galaxy.print_state();
+    }
+    if new_keys.contains(&Keycode::Equals) {
+        SCALE.fetch_add(1, Ordering::SeqCst);
+    }
+    if new_keys.contains(&Keycode::Minus) {
+        SCALE.fetch_sub(1, Ordering::SeqCst);
+    }
+    if keys.contains(&Keycode::T) {
+        if new_keys.contains(&Keycode::Num0) {
+            *images = galaxy.start_tutorial(0);
+        }
+        if new_keys.contains(&Keycode::Num1) {
+            *images = galaxy.start_tutorial(1);
+        }
+        if new_keys.contains(&Keycode::Num2) {
+            *images = galaxy.start_tutorial(2);
+        }
+        if new_keys.contains(&Keycode::Num3) {
+            *images = galaxy.start_tutorial(3);
+        }
+        if new_keys.contains(&Keycode::Num4) {
+            *images = galaxy.start_tutorial(4);
+        }
+        if new_keys.contains(&Keycode::Num5) {
+            *images = galaxy.start_tutorial(5);
+        }
+        if new_keys.contains(&Keycode::Num6) {
+            *images = galaxy.start_tutorial(6);
+        }
+        if new_keys.contains(&Keycode::Num7) {
+            *images = galaxy.start_tutorial(7);
+        }
+        if new_keys.contains(&Keycode::Num8) {
+            *images = galaxy.start_tutorial(8);
+        }
+        if new_keys.contains(&Keycode::Num9) {
+            *images = galaxy.start_tutorial(9);
+        }
+        return;
+    }
+    if new_keys.contains(&Keycode::Num0) {
+        galaxy.set_state(State::Initial);
+        *images = galaxy.click((0, 0));
+    }
+    if new_keys.contains(&Keycode::Num1) {
+        galaxy.set_state(State::Menu);
+        *images = galaxy.click((0, 0));
+    }
+    if new_keys.contains(&Keycode::Num2) {
+        galaxy.set_state(State::Multiplayer);
+        *images = galaxy.click((0, 0));
+    }
+    if new_keys.contains(&Keycode::Num3) {
+        galaxy.set_state(State::Join(1113939892088752268));
+        *images = galaxy.click((0, 0));
+    }
+    // if new_keys.contains(&Keycode::J) {
+    //     galaxy.join_new_game();
+    //     *images = galaxy.click((0, 0));
+    // }
+}
+
 fn translate((x, y): (i32, i32)) -> (i32, i32) {
-    (x + DIMENSIONS.0 / 2 / SCALE, y + DIMENSIONS.1 / 2 / SCALE)
+    (
+        x + DIMENSIONS.0 / 2 / SCALE.load(Ordering::Relaxed),
+        y + DIMENSIONS.1 / 2 / SCALE.load(Ordering::Relaxed),
+    )
 }
 
 fn rev_translate((x, y): (i32, i32)) -> (i32, i32) {
     (
-        (x - DIMENSIONS.0 / 2) / SCALE,
-        (y - DIMENSIONS.1 / 2) / SCALE,
+        (x - DIMENSIONS.0 / 2) / SCALE.load(Ordering::Relaxed),
+        (y - DIMENSIONS.1 / 2) / SCALE.load(Ordering::Relaxed),
     )
+}
+
+fn save_images(images: &Vec<Vec<(i32, i32)>>) {
+    let width = 400;
+    let height = 300;
+    let mut img = GrayImage::new(width, height);
+    for image in images {
+        for pixel in image {
+            img.put_pixel(
+                (pixel.0 + width as i32 / 2) as u32,
+                (pixel.1 + height as i32 / 2) as u32,
+                Luma([255]),
+            );
+        }
+    }
+    img.save_with_format("capture.bmp", ImageFormat::Bmp)
+        .unwrap();
+    Command::new(concat!(env!("CARGO_MANIFEST_DIR"), "/annotate_image.py"))
+        .args(&["capture.bmp", "capture.svg"])
+        .spawn()
+        .expect("Could not run annotater")
+        .wait()
+        .unwrap();
+    println!("Image saved");
 }

@@ -6,6 +6,7 @@ use nom::sequence::{pair, terminated, preceded, separated_pair, delimited};
 use nom::multi::{many0, separated_list, many_till};
 use nom::{branch::alt, IResult};
 
+use std::iter::FromIterator;
 use std::num::ParseIntError;
 use std::rc::Rc;
 
@@ -125,15 +126,7 @@ fn linear(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
             terminated(tag("]"), space0),
         ),
         |bitstring| -> Result<Rc<Expr>, ParseIntError> {
-            Ok(Expr::new(
-                Value::Linear(bitstring.chunks(8).map(|s| {
-                    let mut s: String = s.iter().collect();
-                    while s.len() < 8 {
-                        s.push('0')
-                    }
-                    u8::from_str_radix(&s, 2)
-                }).collect::<Result<Vec<_>, ParseIntError>>()?),
-            ))
+            Ok(Expr::new(Value::Linear(String::from_iter(bitstring))))
         },
     )(input)
 }
