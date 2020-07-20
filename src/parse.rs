@@ -46,7 +46,7 @@ fn cons(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
             terminated(tag("nil"), space0),
         ),
         |(items, _nil)| {
-            Expr::new_list(items)
+            Expr::new_list(&items)
         }
     )(input)
 }
@@ -114,7 +114,7 @@ fn list(input: &str) -> IResult<&str, Rc<Expr>, VerboseError<&str>> {
             separated_list(terminated(tag(","), space0), element),
             terminated(tag(")"), space0),
         ),
-        |list| Expr::new_list(list),
+        |list| Expr::new_list(&list),
     )(input)
 }
 

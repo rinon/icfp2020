@@ -238,6 +238,10 @@ fn handle_input(
         galaxy.new_test_game();
         *images = galaxy.click((0, 0));
     }
+    if new_keys.contains(&Keycode::O) {
+        let response = galaxiator::orbit(galaxy);
+        *images = galaxy.interact(response);
+    }
 }
 
 fn translate((x, y): (i32, i32)) -> (i32, i32) {

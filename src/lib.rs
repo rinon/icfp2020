@@ -18,8 +18,54 @@ use std::process;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::thread;
+use std::f32::consts::FRAC_PI_8;
 
+const SERVER_URL: &str = "https://icfpc2020-api.testkontur.ru";
 const API_KEY: &str = "fbfebaf26f4e4f92838c0a3ba5f5d815";
+
+
+pub fn orbit(env: &mut Environment) -> Rc<Expr> {
+    let response = GameResponse::parse(&env.last_response).unwrap();
+    let role = response.static_info.role;
+
+    let my_ship = response.state.unwrap().ships.iter().find_map(|ship| {
+        if ship.0.role == role {
+            Some(ship.0.clone())
+        } else {
+            None
+        }
+    }).expect("Could not find my ship");
+
+    let vector = compute_orbit(&my_ship);
+    env.send_commands(&[
+        Command::Accelerate {
+            ship_id: my_ship.id,
+            vector,
+        }
+    ])
+}
+
+fn compute_orbit(ship: &Ship) -> (i32, i32) {
+    let angle = (ship.position.1 as f32).atan2(ship.position.0 as f32);
+    if angle > -FRAC_PI_8 && angle < FRAC_PI_8 {
+        (0, -1)
+    } else if angle > FRAC_PI_8 && angle < FRAC_PI_8*3.0 {
+        (1, -1)
+    } else if angle > FRAC_PI_8*3.0 && angle < FRAC_PI_8*5.0 {
+        (1, 0)
+    } else if angle > FRAC_PI_8*5.0 && angle < FRAC_PI_8*7.0 {
+        (1, 1)
+    } else if angle > FRAC_PI_8*7.0 || angle < -FRAC_PI_8*7.0 {
+        (0, 1)
+    } else if angle > -FRAC_PI_8*7.0 || angle < -FRAC_PI_8*5.0 {
+        (-1, 1)
+    } else if angle > -FRAC_PI_8*5.0 || angle < -FRAC_PI_8*3.0 {
+        (-1, 0)
+    } else {
+        (-1, -1)
+    }
+}
+
 
 pub enum State {
     Initial,
@@ -83,7 +129,7 @@ impl Environment {
         let mut ai_exe = env::current_exe().unwrap();
         ai_exe.set_file_name("app");
         let _ = process::Command::new(ai_exe)
-            .arg(&self.server_url)
+            .arg(SERVER_URL)
             .arg(player2_key.num().to_string())
             .spawn()
             .expect("Could not start AI");
@@ -107,11 +153,11 @@ impl Environment {
     }
 
     pub fn send_commands(&mut self, commands: &[Command]) -> Rc<Expr> {
-        let commands = commands.into_iter().map(|c| c.into()).collect();
-        self.send(&*Expr::new_list(vec![
+        let commands: Vec<_> = commands.into_iter().map(|c| c.into()).collect();
+        self.send(&*Expr::new_list(&[
             Value::Num(4).into(),
             Value::Num(self.player_key.unwrap()).into(),
-            Expr::new_list(commands),
+            Expr::new_list(&commands),
         ]))
     }
 }
@@ -139,8 +185,17 @@ impl TryFrom<i64> for GameStage {
 pub struct GameResponse {
     pub success: bool,
     pub stage: GameStage,
-    pub static_info: Rc<Expr>,
+    pub static_info: StaticGameInfo,
     pub state: Option<GameState>,
+}
+
+#[derive(Debug)]
+pub struct StaticGameInfo {
+    pub x0: Rc<Expr>,
+    pub role: ShipRole,
+    pub x2: Rc<Expr>,
+    pub x3: Rc<Expr>,
+    pub x4: Rc<Expr>,
 }
 
 #[derive(Debug)]
@@ -150,7 +205,7 @@ pub struct GameState {
     pub ships: Vec<(Ship, Vec<Command>)>,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ShipRole {
     Attacker,
     Defender,
@@ -160,14 +215,14 @@ impl TryFrom<i64> for ShipRole {
     type Error = ();
     fn try_from(num: i64) -> Result<ShipRole, ()> {
         match num {
-            1 => Ok(ShipRole::Attacker),
-            2 => Ok(ShipRole::Defender),
+            0 => Ok(ShipRole::Attacker),
+            1 => Ok(ShipRole::Defender),
             _ => Err(()),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Ship {
     pub role: ShipRole,
     pub id: u64,
@@ -196,33 +251,45 @@ pub enum Command {
         target: (i32, i32),
         x3: Rc<Expr>,
     },
+    Split {
+        ship_id: u64,
+        params: [i64; 4],
+    },
 }
 
 impl From<&Command> for Rc<Expr> {
     fn from(command: &Command) -> Rc<Expr> {
         match command {
-            Command::Accelerate { ship_id, vector } => Expr::new_list(vec![
+            Command::Accelerate { ship_id, vector } => Expr::new_list(&[
                 Value::Num(0).into(),
                 Value::Num(*ship_id as i64).into(),
                 cons(Value::Num(vector.0 as i64), Value::Num(vector.1 as i64)),
             ]),
-            Command::Detonate { ship_id } => Expr::new_list(vec![
+            Command::Detonate { ship_id } => Expr::new_list(&[
                 Value::Num(1).into(),
                 Value::Num(*ship_id as i64).into(),
             ]),
-            Command::Shoot { ship_id, target, x3 } => Expr::new_list(vec![
+            Command::Shoot { ship_id, target, x3 } => Expr::new_list(&[
                 Value::Num(2).into(),
                 Value::Num(*ship_id as i64).into(),
                 cons(Value::Num(target.0 as i64), Value::Num(target.1 as i64)),
                 x3.clone(),
             ]),
+            Command::Split { ship_id, params } => {
+                let params: Vec<_> = params.iter().map(|v| Value::Num(*v).into()).collect();
+                Expr::new_list(&[
+                    Value::Num(3).into(),
+                    Value::Num(*ship_id as i64).into(),
+                    Expr::new_list(&params),
+                ])
+            }
         }
     }
 }
 
 impl Command {
     fn parse(ship_id: u64, xs: &Rc<Expr>) -> Option<Self> {
-        let (id, xs) = dbg!(xs.cons_value()?);
+        let (id, xs) = xs.cons_value()?;
         match id.num() {
             0 => {
                 let (vector, xs) = xs.cons_value()?;
@@ -253,8 +320,21 @@ impl GameResponse {
         Some(GameResponse {
             success: success.num() == 1,
             stage: stage.num().try_into().ok()?,
-            static_info,
+            static_info: StaticGameInfo::parse(&static_info)?,
             state: GameState::parse(&game_state),
+        })
+    }
+}
+
+impl StaticGameInfo {
+    pub fn parse(expr: &Rc<Expr>) -> Option<Self> {
+        let (x0, role, x2, x3, x4) = expr.list_value()?;
+        Some(StaticGameInfo {
+            x0,
+            role: role.num().try_into().ok()?,
+            x2,
+            x3,
+            x4,
         })
     }
 }
@@ -318,6 +398,7 @@ pub struct Environment {
     symbols: HashMap<u64, Rc<Expr>>,
     galaxy: Rc<Expr>,
     state: Rc<Expr>,
+    last_response: Rc<Expr>,
     loc: (i32, i32),
 
     server_url: String,
@@ -331,11 +412,13 @@ impl Default for Environment {
             symbols: HashMap::new(),
             galaxy: Expr::new(Value::Nil),
             state: Expr::new(Value::Nil),
+            last_response: Expr::new(Value::Nil),
             loc: (0, 0),
 
             server_url: format!(
-                "https://icfpc2020-api.testkontur.ru/aliens/send?apiKey={}",
-                API_KEY
+                "{}/aliens/send?apiKey={}",
+                SERVER_URL,
+                API_KEY,
             ),
             player_key: None,
             debug: false,
@@ -378,7 +461,7 @@ impl Environment {
     }
 
     pub fn make_submission(&mut self, server_url: &str, player_key: i64) {
-        self.server_url = format!("{}/aliens/send?playerKey={}", server_url, player_key);
+        self.server_url = format!("{}/aliens/send?playerKey={}&apiKey={}", server_url, player_key, API_KEY);
         self.player_key = Some(player_key);
     }
 
@@ -436,9 +519,8 @@ impl Environment {
         if flag.num() == 0 {
             multirender(data)
         } else {
-            let event = self.send(&*data);
-            let _response = GameResponse::parse(&event);
-            self.interact(event)
+            let response = self.send(&*data);
+            self.interact(response)
         }
     }
 
@@ -521,7 +603,7 @@ impl Environment {
         }
     }
 
-    fn send(&self, data: &Expr) -> Rc<Expr> {
+    fn send(&mut self, data: &Expr) -> Rc<Expr> {
         info!("Sending {}", data);
         let data = modulate::modulate(data).expect("Couldn't modulate message");
         let mut response = isahc::post(&self.server_url, data).expect("Could not send to server");
@@ -534,6 +616,7 @@ impl Environment {
             .expect("Could not demodulate server response")
             .1;
         info!("Response {}", response);
+        self.last_response = response.clone();
         response
     }
 }
@@ -587,9 +670,9 @@ impl Expr {
         })
     }
 
-    pub fn new_list(list: Vec<Rc<Expr>>) -> Rc<Expr> {
+    pub fn new_list(list: &[Rc<Expr>]) -> Rc<Expr> {
         list.into_iter().rfold(Expr::new(Value::Nil), |list, item| {
-            apply(apply(Expr::new(Value::Cons), item), list)
+            apply(apply(Expr::new(Value::Cons), item.clone()), list)
         })
     }
 

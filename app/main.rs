@@ -3,7 +3,7 @@ use std::io::Error;
 
 use log::debug;
 
-use galaxiator::{Environment, GameResponse, GameStage};
+use galaxiator::{Environment, GameResponse, GameStage, ShipRole};
 
 fn main() -> Result<(), Error> {
     env_logger::init();
@@ -20,15 +20,28 @@ fn main() -> Result<(), Error> {
 
     let mut response = GameResponse::parse(&env.join_game())
         .expect("Could not parse join response");
-    dbg!(response);
+    dbg!(&response);
 
-    response = GameResponse::parse(&env.start_game(32, 1, 16, 1))
+    let role = response.static_info.role;
+
+    let (fuel, gun_heat, cooling, unknown) = if role == ShipRole::Defender {
+        (255-16, 0, 16, 1)
+    } else {
+        (255-16-8, 16, 8, 1)
+    };
+
+    response = GameResponse::parse(&env.start_game(fuel, gun_heat, cooling, unknown))
         .expect("Could not parse start response");
     dbg!(&response);
 
-    while response.stage != GameStage::Finished {
+    while response.stage != GameStage::Finished && response.state.is_none() {
         response = GameResponse::parse(&env.send_commands(&[]))
             .expect("Could not parse game response");
+        dbg!(&response);
+    }
+
+    while response.stage != GameStage::Finished {
+        response = GameResponse::parse(&galaxiator::orbit(&mut env)).unwrap();
     }
 
     Ok(())
