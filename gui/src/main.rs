@@ -23,7 +23,7 @@ pub fn main() -> Result<(), String> {
 
     let args = App::new("Galaxiator GUI")
         .author("Stephen Crane")
-        .arg(Arg::with_name("tutorial").takes_value(true))
+        .arg(Arg::with_name("tutorial").long("tutorial").takes_value(true))
         .get_matches();
 
     let sdl_context = sdl2::init()?;
@@ -71,7 +71,6 @@ pub fn main() -> Result<(), String> {
         Color::RGBA(0, 0, 255, 192),
     ];
 
-    let mut count = 0;
     'running: loop {
         for event in events.poll_iter() {
             match event {
@@ -235,10 +234,10 @@ fn handle_input(
         galaxy.set_state(State::Join(1113939892088752268));
         *images = galaxy.click((0, 0));
     }
-    // if new_keys.contains(&Keycode::J) {
-    //     galaxy.join_new_game();
-    //     *images = galaxy.click((0, 0));
-    // }
+    if new_keys.contains(&Keycode::J) {
+        galaxy.new_test_game();
+        *images = galaxy.click((0, 0));
+    }
 }
 
 fn translate((x, y): (i32, i32)) -> (i32, i32) {

@@ -9,10 +9,12 @@ use nom::error::VerboseError;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
+use std::env;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::process;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::thread;
@@ -58,30 +60,36 @@ impl Environment {
         self.interact(event)
     }
 
-    // pub fn join_new_game(&mut self) {
-    //     info!("Creating game");
-    //     let response = self.send(&*p("( 1 , 0 )"));
-    //     let (code, xs) = response.cons_value().unwrap();
-    //     assert_eq!(code.num(), 1);
-    //     let (players, _nil) = xs.cons_value().unwrap();
-    //     let (player1, player2) = players.cons_value().unwrap();
-    //     let (player2, _nil) = player2.cons_value().unwrap();
+    pub fn new_test_game(&mut self) {
+        info!("Creating game");
+        let response = self.send(&*p("( 1 , 0 )"));
+        let (code, xs) = response.cons_value().unwrap();
+        assert_eq!(code.num(), 1);
+        let (players, _nil) = xs.cons_value().unwrap();
+        let (player1, player2) = players.cons_value().unwrap();
+        let (player2, _nil) = player2.cons_value().unwrap();
 
-    //     let (id, player1) = player1.cons_value().unwrap();
-    //     assert_eq!(id.num(), 0);
-    //     let (player1_key, _nil) = player1.cons_value().unwrap();
+        let (id, player1) = player1.cons_value().unwrap();
+        assert_eq!(id.num(), 0);
+        let (player1_key, _nil) = player1.cons_value().unwrap();
 
-    //     let (id, player2) = player2.cons_value().unwrap();
-    //     assert_eq!(id.num(), 1);
-    //     let (player2_key, _nil) = player2.cons_value().unwrap();
+        let (id, player2) = player2.cons_value().unwrap();
+        assert_eq!(id.num(), 1);
+        let (player2_key, _nil) = player2.cons_value().unwrap();
 
-    //     self.player_key = Some(player2_key.num());
+        self.player_key = Some(player1_key.num());
 
-    //     let join_msg = modulate::modulate(&*p(&format!("( 2 , {} , nil )", player1_key.num())))
-    //         .expect("Couldn't modulate message");
-    //     let url = self.server_url.clone();
-    //     self.set_state(State::Join(self.player_key.unwrap()));
-    // }
+        let url = self.server_url.clone();
+        let mut ai_exe = env::current_exe().unwrap();
+        ai_exe.set_file_name("app");
+        let _ = process::Command::new(ai_exe)
+            .arg(&self.server_url)
+            .arg(player2_key.num().to_string())
+            .spawn()
+            .expect("Could not start AI");
+
+        self.set_state(State::Join(self.player_key.unwrap()));
+    }
 
     pub fn join_game(&mut self) -> Rc<Expr> {
         self.send(&*p(&format!("( 2 , {} , nil )", self.player_key.unwrap())))
@@ -123,7 +131,7 @@ pub struct GameResponse {
     success: bool,
     stage: GameStage,
     static_info: Rc<Expr>,
-    state: GameState,
+    state: Option<GameState>,
 }
 
 #[derive(Debug)]
@@ -217,7 +225,7 @@ impl GameResponse {
             success: success.num() == 1,
             stage: stage.num().try_into().ok()?,
             static_info,
-            state: GameState::parse(&game_state)?,
+            state: GameState::parse(&game_state),
         })
     }
 }
@@ -340,7 +348,7 @@ impl Environment {
     }
 
     pub fn make_submission(&mut self, server_url: &str, player_key: i64) {
-        self.server_url = format!("{}/aliens/send?playerKey={}", server_url, player_key);
+        self.server_url = server_url.to_string();
         self.player_key = Some(player_key);
     }
 
@@ -399,8 +407,7 @@ impl Environment {
             multirender(data)
         } else {
             let event = self.send(&*data);
-            let response = GameResponse::parse(&event);
-            dbg!(response);
+            let _response = GameResponse::parse(&event);
             self.interact(event)
         }
     }
