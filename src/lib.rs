@@ -4,7 +4,7 @@ mod modulate;
 mod parse;
 
 use isahc::prelude::*;
-use log::{info, warn};
+use log::{debug, info, warn};
 use nom::error::VerboseError;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -491,7 +491,7 @@ impl Environment {
         let response = response
             .text()
             .expect("Did not receive proper server response");
-        info!("Response {}", response);
+        debug!("Response {}", response);
 
         let response = modulate::demodulate(&response)
             .expect("Could not demodulate server response")

@@ -1,3 +1,3 @@
 #!/bin/sh
 
-/solution/target/release/app "$@"
+RUST_LOG=info /solution/target/release/app "$@"
