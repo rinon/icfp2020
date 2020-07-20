@@ -105,9 +105,18 @@ impl Environment {
             unknown
         )))
     }
+
+    pub fn send_commands(&mut self, commands: &[Command]) -> Rc<Expr> {
+        let commands = commands.into_iter().map(|c| c.into()).collect();
+        self.send(&*Expr::new_list(vec![
+            Value::Num(4).into(),
+            Value::Num(self.player_key.unwrap()).into(),
+            Expr::new_list(commands),
+        ]))
+    }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum GameStage {
     NotStarted,
     Started,
@@ -128,17 +137,17 @@ impl TryFrom<i64> for GameStage {
 
 #[derive(Debug)]
 pub struct GameResponse {
-    success: bool,
-    stage: GameStage,
-    static_info: Rc<Expr>,
-    state: Option<GameState>,
+    pub success: bool,
+    pub stage: GameStage,
+    pub static_info: Rc<Expr>,
+    pub state: Option<GameState>,
 }
 
 #[derive(Debug)]
 pub struct GameState {
-    tick: u64,
+    pub tick: u64,
     x1: Rc<Expr>,
-    ships: Vec<(Ship, Vec<Command>)>,
+    pub ships: Vec<(Ship, Vec<Command>)>,
 }
 
 #[derive(Debug)]
@@ -160,15 +169,15 @@ impl TryFrom<i64> for ShipRole {
 
 #[derive(Debug)]
 pub struct Ship {
-    role: ShipRole,
-    id: u64,
-    position: (i32, i32),
-    velocity: (i32, i32),
-    fuel: i64,
-    gun_heat: i64,
-    cooling: i64,
-    unknown_supply: i64,
-    temp: i64,
+    pub role: ShipRole,
+    pub id: u64,
+    pub position: (i32, i32),
+    pub velocity: (i32, i32),
+    pub fuel: i64,
+    pub gun_heat: i64,
+    pub cooling: i64,
+    pub unknown_supply: i64,
+    pub temp: i64,
     x6: Rc<Expr>,
     x7: Rc<Expr>,
 }
@@ -189,11 +198,31 @@ pub enum Command {
     },
 }
 
+impl From<&Command> for Rc<Expr> {
+    fn from(command: &Command) -> Rc<Expr> {
+        match command {
+            Command::Accelerate { ship_id, vector } => Expr::new_list(vec![
+                Value::Num(0).into(),
+                Value::Num(*ship_id as i64).into(),
+                cons(Value::Num(vector.0 as i64), Value::Num(vector.1 as i64)),
+            ]),
+            Command::Detonate { ship_id } => Expr::new_list(vec![
+                Value::Num(1).into(),
+                Value::Num(*ship_id as i64).into(),
+            ]),
+            Command::Shoot { ship_id, target, x3 } => Expr::new_list(vec![
+                Value::Num(2).into(),
+                Value::Num(*ship_id as i64).into(),
+                cons(Value::Num(target.0 as i64), Value::Num(target.1 as i64)),
+                x3.clone(),
+            ]),
+        }
+    }
+}
+
 impl Command {
-    fn parse(xs: &Rc<Expr>) -> Option<Self> {
-        let (id, xs) = xs.cons_value()?;
-        let (ship_id, xs) = xs.cons_value()?;
-        let ship_id = ship_id.num() as u64;
+    fn parse(ship_id: u64, xs: &Rc<Expr>) -> Option<Self> {
+        let (id, xs) = dbg!(xs.cons_value()?);
         match id.num() {
             0 => {
                 let (vector, xs) = xs.cons_value()?;
@@ -239,13 +268,14 @@ impl GameState {
             let (x, xs) = expr.cons_value().unwrap();
             expr = xs;
             let (ship, mut command_expr) = x.list_value().unwrap();
+            let ship = Ship::parse(&ship)?;
             let mut commands = vec![];
             while command_expr.value() != Value::Nil {
                 let (x, xs) = command_expr.cons_value()?;
-                commands.push(Command::parse(&x)?);
+                commands.push(Command::parse(ship.id, &x)?);
                 command_expr = xs;
             }
-            ships.push((Ship::parse(&ship)?, commands));
+            ships.push((ship, commands));
         }
         Some(GameState {
             tick: tick.num() as u64,
@@ -348,7 +378,7 @@ impl Environment {
     }
 
     pub fn make_submission(&mut self, server_url: &str, player_key: i64) {
-        self.server_url = server_url.to_string();
+        self.server_url = format!("{}/aliens/send?playerKey={}", server_url, player_key);
         self.player_key = Some(player_key);
     }
 
